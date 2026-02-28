@@ -5,7 +5,10 @@ import (
 	"fullcycle-auction_go/configuration/logger"
 	"fullcycle-auction_go/internal/entity/auction_entity"
 	"fullcycle-auction_go/internal/internal_error"
+	"os"
+	"time"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
@@ -46,5 +49,44 @@ func (ar *AuctionRepository) CreateAuction(
 		return internal_error.NewInternalServerError("Error trying to insert auction")
 	}
 
+	go ar.scheduleClose(auctionEntity.Id, getAuctionDuration())
+
 	return nil
+}
+
+func (ar *AuctionRepository) scheduleClose(auctionId string, duration time.Duration) {
+	time.Sleep(duration)
+
+	ctx := context.Background()
+	if err := ar.UpdateAuctionStatus(ctx, auctionId, auction_entity.Completed); err != nil {
+		logger.Error("Error trying to close auction", err)
+	}
+}
+
+func (ar *AuctionRepository) UpdateAuctionStatus(
+	ctx context.Context,
+	auctionId string,
+	status auction_entity.AuctionStatus) *internal_error.InternalError {
+	filter := bson.M{"_id": auctionId}
+	update := bson.M{"$set": bson.M{"status": status}}
+
+	_, err := ar.Collection.UpdateOne(ctx, filter, update)
+	if err != nil {
+		logger.Error("Error trying to update auction status", err)
+		return internal_error.NewInternalServerError("Error trying to update auction status")
+	}
+
+	return nil
+}
+
+func getAuctionDuration() time.Duration {
+	durationStr := os.Getenv("AUCTION_DURATION")
+	if durationStr == "" {
+		durationStr = os.Getenv("AUCTION_INTERVAL")
+	}
+	duration, err := time.ParseDuration(durationStr)
+	if err != nil {
+		return time.Minute * 5
+	}
+	return duration
 }
